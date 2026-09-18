@@ -58,4 +58,5 @@ add_custom_target(
 
 add_gtest(base_test)
 add_gtest(pchip_test)
+add_gtest(tonemap_test)
 add_gtest(utils_test)

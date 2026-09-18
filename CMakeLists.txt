@@ -57,6 +57,9 @@ corrosion_add_cxxbridge(pchip_rs_bridge CRATE libsmpte2094_50 FILES
 corrosion_add_cxxbridge(utils_rs_bridge CRATE libsmpte2094_50 FILES
                         utils_ffi.rs)
 
+corrosion_add_cxxbridge(tonemap_rs_bridge CRATE libsmpte2094_50 FILES
+                        tonemap_ffi.rs)
+
 add_custom_target(
   generate_include_links ALL
   COMMAND ${CMAKE_COMMAND} -E make_directory
@@ -77,13 +80,16 @@ target_include_directories(
                          $<INSTALL_INTERFACE:include>)
 
 add_library(smpte2094_50_utils src/utils.cc include/smpte2094_50/utils.h
-                               src/pchip.cc include/smpte2094_50/pchip.h)
+                               src/pchip.cc include/smpte2094_50/pchip.h
+                               src/tonemap.cc include/smpte2094_50/tonemap.h
+                               src/rust_utils.cc src/rust_utils.h
+                               src/tonemap_ffi.h)
 add_dependencies(smpte2094_50_utils generate_include_links)
 
 target_link_libraries(
   smpte2094_50_utils
   PUBLIC absl::status absl::statusor absl::strings absl::span smpte2094_50
-  PRIVATE pchip_rs_bridge utils_rs_bridge)
+  PRIVATE pchip_rs_bridge utils_rs_bridge tonemap_rs_bridge)
 target_include_directories(
   smpte2094_50_utils
   PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>

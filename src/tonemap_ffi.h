@@ -1,4 +1,4 @@
-/*
+/**
  * Copyright 2026 Google LLC
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,14 +13,10 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-// Basic lib for SMPTE ST 2094-50.
-pub mod pchip;
-pub mod tonemap;
-pub mod utils;
 
-#[cfg(feature = "cxxbridge")]
-pub mod pchip_ffi;
-#[cfg(feature = "cxxbridge")]
-pub mod tonemap_ffi;
-#[cfg(feature = "cxxbridge")]
-pub mod utils_ffi;
+#ifndef LIBSMPTE2094_50_SRC_TONEMAP_FFI_H_
+#define LIBSMPTE2094_50_SRC_TONEMAP_FFI_H_
+
+#include "tonemap_rs_bridge/tonemap_ffi.h"
+
+#endif  // LIBSMPTE2094_50_SRC_TONEMAP_FFI_H_

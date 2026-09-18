@@ -31,7 +31,8 @@ absl::StatusOr<std::vector<float>> ComputePchipSlopes(
     absl::Span<const float> x, absl::Span<const float> y);
 
 // A Piecewise Cubic Hermite Interpolating Polynomial (PCHIP) interpolator.
-// This interpolator ensures monotonicity (if the input points are monotonic).
+// If the input points are monotonic and no slopes are provided, this
+// interpolator ensures monotonicity.
 // For values outside the domain of the control points, it extrapolates by
 // clamping to the nearest y-value (i.e. flat extrapolation).
 class PchipInterpolator {
@@ -65,8 +66,8 @@ class PchipInterpolator {
 // A specialized interpolator for SMPTE ST 2094-50 tone mapping curves.
 // Within the domain of the control points, it behaves exactly like a PCHIP
 // interpolator. However, for values greater than the maximum x control point,
-// it extrapolates using a logarithmic roll-off instead of clamping, which
-// helps preserve highlight details naturally.
+// it extrapolates using a logarithmic roll-off, resulting in a flat tone 
+// mapping curve after the last control point.
 class GainCurve {
  public:
   static absl::StatusOr<GainCurve> Create(absl::Span<const float> x,

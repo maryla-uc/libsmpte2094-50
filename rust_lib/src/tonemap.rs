@@ -74,10 +74,10 @@ impl ActiveRule {
 /// Headroom-adaptive tone mapper context.
 #[derive(Clone, Debug)]
 pub struct ToneMapper {
-    rule_i: ActiveRule,
-    rule_j: ActiveRule,
-    weight_i: f32,
-    weight_j: f32,
+    rule_0: ActiveRule,
+    rule_1: ActiveRule,
+    weight_0: f32,
+    weight_1: f32,
     is_identity: bool,
 }
 
@@ -85,10 +85,10 @@ impl ToneMapper {
     /// Creates a no-op identity tone mapper.
     pub fn identity() -> Self {
         Self {
-            rule_i: ActiveRule::ZeroGain,
-            rule_j: ActiveRule::ZeroGain,
-            weight_i: 1.0,
-            weight_j: 0.0,
+            rule_0: ActiveRule::ZeroGain,
+            rule_1: ActiveRule::ZeroGain,
+            weight_0: 1.0,
+            weight_1: 0.0,
             is_identity: true,
         }
     }
@@ -138,20 +138,16 @@ impl ToneMapper {
             return Ok(Self::identity());
         }
 
-        // Binary search for bracketing rules.
-        let mut altr_min = 0;
-        let mut altr_max = candidates.len() - 1;
-        while altr_max - altr_min > 1 {
-            let mid = (altr_min + altr_max) / 2;
-            if target_headroom_log2 <= candidates[mid].headroom {
-                altr_max = mid;
-            } else {
-                altr_min = mid;
-            }
-        }
+        // Find bracketing rules.
+        let idx_1 = candidates
+            .iter()
+            .position(|c| c.headroom >= target_headroom_log2)
+            .unwrap_or(candidates.len() - 1)
+            .max(1);
+        let idx_0 = idx_1 - 1;
 
-        let h_min = candidates[altr_min].headroom;
-        let h_max = candidates[altr_max].headroom;
+        let h_0 = candidates[idx_0].headroom;
+        let h_1 = candidates[idx_1].headroom;
 
         let create_active_rule = |cand: RuleCandidate| -> Result<ActiveRule, String> {
             match cand.rule_index {
@@ -170,28 +166,28 @@ impl ToneMapper {
             }
         };
 
-        let rule_i = create_active_rule(candidates[altr_min])?;
-        let rule_j = create_active_rule(candidates[altr_max])?;
+        let rule_0 = create_active_rule(candidates[idx_0])?;
+        let rule_1 = create_active_rule(candidates[idx_1])?;
 
-        let (weight_i, weight_j) = if h_max > h_min {
-            let w_j = ((target_headroom_log2 - h_min) / (h_max - h_min)).clamp(0.0, 1.0);
-            (1.0 - w_j, w_j)
+        let (weight_0, weight_1) = if h_1 > h_0 {
+            let w_1 = ((target_headroom_log2 - h_0) / (h_1 - h_0)).clamp(0.0, 1.0);
+            (1.0 - w_1, w_1)
         } else {
             (1.0, 0.0)
         };
 
-        let is_identity = match (&rule_i, &rule_j) {
+        let is_identity = match (&rule_0, &rule_1) {
             (ActiveRule::ZeroGain, ActiveRule::ZeroGain) => true,
-            (ActiveRule::ZeroGain, _) if weight_j == 0.0 => true,
-            (_, ActiveRule::ZeroGain) if weight_i == 0.0 => true,
+            (ActiveRule::ZeroGain, _) if weight_1 == 0.0 => true,
+            (_, ActiveRule::ZeroGain) if weight_0 == 0.0 => true,
             _ => false,
         };
 
         Ok(Self {
-            rule_i,
-            rule_j,
-            weight_i,
-            weight_j,
+            rule_0,
+            rule_1,
+            weight_0,
+            weight_1,
             is_identity,
         })
     }
@@ -214,16 +210,16 @@ impl ToneMapper {
         }
 
         let mut log_gains = [0.0f32; 3];
-        if self.weight_i > 0.0 {
-            let g_i = self.rule_i.evaluate(color);
+        if self.weight_0 > 0.0 {
+            let g_0 = self.rule_0.evaluate(color);
             for c in 0..3 {
-                log_gains[c] += self.weight_i * g_i[c];
+                log_gains[c] += self.weight_0 * g_0[c];
             }
         }
-        if self.weight_j > 0.0 {
-            let g_j = self.rule_j.evaluate(color);
+        if self.weight_1 > 0.0 {
+            let g_1 = self.rule_1.evaluate(color);
             for c in 0..3 {
-                log_gains[c] += self.weight_j * g_j[c];
+                log_gains[c] += self.weight_1 * g_1[c];
             }
         }
 

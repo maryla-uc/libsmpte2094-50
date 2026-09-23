@@ -15,6 +15,7 @@
  */
 // Basic lib for SMPTE ST 2094-50.
 pub mod pchip;
+pub mod tonemap;
 pub mod utils;
 
 #[cfg(feature = "cxxbridge")]

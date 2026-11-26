@@ -24,10 +24,14 @@ const APPLICATION_VERSION: i32 = 0;
 const MINIMUM_APPLICATION_VERSION: i32 = 0;
 const DEFAULT_HDR_REFERENCE_WHITE: f32 = 203.0;
 
-const MAX_CURVE_SIZE: usize = 32;
-const MAX_RULES_SIZE: usize = 4;
+/// Maximum number of control points in a tone mapping curve (SMPTE ST 2094-50, section 6.5.2).
+pub const MAX_CURVE_SIZE: usize = 32;
+/// Maximum number of alternative tone mapping rules (SMPTE ST 2094-50, section 6.2.2).
+pub const MAX_RULES_SIZE: usize = 4;
 
-const GAIN_APPLICATION_SPACE_CHROMATICITIES: [[f32; 8]; 3] = [
+/// Canonical gain application space chromaticities `[xr, yr, xg, yg, xb, yb, xw, yw]` for
+/// Rec. 709 (sRGB), Display P3, and Rec. 2020 (modes 0, 1, and 2 in SMPTE ST 2094-50).
+pub const GAIN_APPLICATION_SPACE_CHROMATICITIES: [[f32; 8]; 3] = [
     [0.64, 0.33, 0.3, 0.6, 0.15, 0.06, 0.3127, 0.329], // Rec. 709 (sRGB)
     [0.68, 0.32, 0.265, 0.69, 0.15, 0.06, 0.3127, 0.329], // Display P3
     [0.708, 0.292, 0.17, 0.797, 0.131, 0.046, 0.3127, 0.329], // Rec. 2020
@@ -142,7 +146,10 @@ impl ToneMappingRule {
             return false;
         }
         // SMPTE ST 2094-50, section 6.5.2.
-        if self.curve.is_empty() || self.curve.len() > 32 {
+        if self.curve.is_empty() || self.curve.len() > MAX_CURVE_SIZE {
+            return false;
+        }
+        if !self.curve.iter().all(|p| p.is_valid() && (self.use_pchip_slope || p.m.is_finite())) {
             return false;
         }
         for i in 0..self.curve.len() - 1 {
@@ -157,7 +164,7 @@ impl ToneMappingRule {
                 return false;
             }
         }
-        self.curve.iter().all(|p| p.is_valid()) && self.mix.is_valid()
+        self.mix.is_valid()
     }
 
     /// Returns a reference to the control points defining the curve.
@@ -294,7 +301,7 @@ impl DynamicMetadata {
     /// 2094-50, including constraints required for serialization.
     pub fn is_valid(&self) -> bool {
         // SMPTE ST 2094-50, section 6.1.2.
-        if self.hdr_reference_white <= 0.0 || self.hdr_reference_white > 10000.0 {
+        if !(self.hdr_reference_white > 0.0 && self.hdr_reference_white <= 10000.0) {
             return false;
         }
         let encoded_hdr_reference_white = encoded_float(self.hdr_reference_white, 5.0);
@@ -306,7 +313,7 @@ impl DynamicMetadata {
             return false;
         }
         let encoded_baseline = encoded_float(self.baseline_hdr_headroom_log2, 10000.0);
-        if self.rules.len() > 4 {
+        if self.rules.len() > MAX_RULES_SIZE {
             return false;
         }
         for i in 0..self.rules.len() {
@@ -345,7 +352,7 @@ impl DynamicMetadata {
         let l3 = 1.0 - l1 - l2;
         // Check that the white point is inside or very close to the boundary of
         // the RGB triangle.
-        if l1 <= 0.0 || l2 <= 0.0 || l3 <= 0.0 {
+        if !(l1 > 0.0 && l2 > 0.0 && l3 > 0.0) {
             return false;
         }
 
@@ -508,7 +515,7 @@ impl DynamicMetadata {
         writer.write(0, 6); // reserved
 
         if self.hdr_reference_white != DEFAULT_HDR_REFERENCE_WHITE {
-            if !(0.0..=10000.0).contains(&self.hdr_reference_white) {
+            if !(self.hdr_reference_white > 0.0 && self.hdr_reference_white <= 10000.0) {
                 return Err(format!(
                     "hdr_reference_white: {} is out of range (0, 10000]",
                     self.hdr_reference_white
@@ -582,7 +589,7 @@ impl DynamicMetadata {
 
         for (a, rule) in self.rules.iter().enumerate() {
             // alternate_hdr_headrooms[a]
-            if rule.alternate_hdr_headroom_log2 < 0.0 || rule.alternate_hdr_headroom_log2 > 6.0 {
+            if !(0.0..=6.0).contains(&rule.alternate_hdr_headroom_log2) {
                 return Err(format!(
                     "alternate_hdr_headroom_log2: {} is out of range [0, 6] for alternate image {}",
                     rule.alternate_hdr_headroom_log2, a
@@ -593,21 +600,21 @@ impl DynamicMetadata {
             // smpte_st_2094_50_component_mixing(a)
             if a == 0 || !has_common_mix_params_flag {
                 let mix = &rule.mix;
+                let mix_params =
+                    [mix.rgb[0], mix.rgb[1], mix.rgb[2], mix.max, mix.min, mix.component];
+                let mut max_c = 0.0f32;
+                for &c in &mix_params {
+                    if !(0.0..=1.0).contains(&c) {
+                        return Err(format!("mix component {} is out of range [0, 1]", c));
+                    }
+                    max_c = max_c.max(c);
+                }
+
                 let component_mixing_type = mix.mix_type();
                 writer.write(component_mixing_type as u16, 2);
                 if component_mixing_type != 3 {
                     writer.write(0, 6);
                 } else {
-                    let mix_params =
-                        [mix.rgb[0], mix.rgb[1], mix.rgb[2], mix.max, mix.min, mix.component];
-                    let mut max_c = 0.0f32;
-                    for &c in &mix_params {
-                        if !(0.0..=1.0).contains(&c) {
-                            return Err(format!("mix component {} is out of range [0, 1]", c));
-                        }
-                        max_c = max_c.max(c);
-                    }
-
                     // normalize and write has_component_mixing_coefficient_flag.
                     for &c in &mix_params {
                         writer.write_bit(c != 0.0);
@@ -634,6 +641,12 @@ impl DynamicMetadata {
                 writer.write_bit(rule.use_pchip_slope);
                 writer.write(0, 2);
                 for point in rule.curve.iter() {
+                    if !(0.0..=64.0).contains(&point.x) {
+                        return Err(format!(
+                            "gain_curve_control_points_x: {} is out of range [0, 64] for alternate image {}",
+                            point.x, a
+                        ));
+                    }
                     // gain_curve_control_points_x[a][c]
                     writer.write_float(point.x * 1000.0);
                 }
@@ -647,6 +660,12 @@ impl DynamicMetadata {
                 };
 
             for point in rule.curve.iter() {
+                if !(-6.0..=6.0).contains(&point.y) {
+                    return Err(format!(
+                        "gain_curve_control_points_y: {} is out of range [-6, 6] for alternate image {}",
+                        point.y, a
+                    ));
+                }
                 let y_sign = if point.y >= 0.0 { 1.0 } else { -1.0 };
                 if y_sign != expected_y_sign && point.y.abs() > 1e-6 {
                     return Err(format!(
@@ -660,6 +679,12 @@ impl DynamicMetadata {
 
             if !rule.use_pchip_slope {
                 for point in rule.curve.iter() {
+                    if !point.m.is_finite() {
+                        return Err(format!(
+                            "gain_curve_control_points_m: {} is not finite for alternate image {}",
+                            point.m, a
+                        ));
+                    }
                     // gain_curve_control_points_theta[a][c]
                     writer.write_float((point.m.atan() + PI / 2.0) * 36000.0 / PI);
                 }
@@ -964,10 +989,11 @@ mod tests {
             gain_application_space_chromaticities: [1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.3, 0.3],
             ..Default::default()
         };
-        expect_false!(metadata.is_valid());
-
-        metadata.hdr_reference_white = 10001.0;
-        expect_false!(metadata.is_valid());
+        for invalid in [0.0, -1.0, 10001.0, f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            metadata.hdr_reference_white = invalid;
+            expect_false!(metadata.is_valid());
+            expect_true!(metadata.to_st2094_50().is_err());
+        }
     }
 
     #[gtest]
@@ -1042,5 +1068,105 @@ mod tests {
             .rules
             .push(ToneMappingRule { alternate_hdr_headroom_log2: 2.000001, ..Default::default() });
         expect_false!(metadata.is_valid());
+    }
+
+    #[gtest]
+    fn test_gain_application_space_chromaticities_presets() {
+        for (expected_mode, chrom) in GAIN_APPLICATION_SPACE_CHROMATICITIES.iter().enumerate() {
+            let metadata = DynamicMetadata {
+                hdr_reference_white: 203.0,
+                baseline_hdr_headroom_log2: 2.0,
+                gain_application_space_chromaticities: *chrom,
+                ..Default::default()
+            };
+            expect_true!(metadata.is_valid());
+            expect_eq!(metadata.gain_application_space_chromaticities_mode(), expected_mode as i32);
+        }
+    }
+
+    #[gtest]
+    fn test_tone_mapping_rule_non_finite_slopes() {
+        for bad_slope in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            let mut rule = ToneMappingRule {
+                alternate_hdr_headroom_log2: 3.0,
+                mix: ComponentMix { max: 1.0, ..Default::default() },
+                curve: vec![
+                    ControlPoint { x: 0.0, y: 0.0, m: 0.0 },
+                    ControlPoint { x: 1.0, y: 0.5, m: bad_slope },
+                ],
+                use_pchip_slope: false,
+            };
+            expect_false!(rule.is_valid());
+
+            let mut metadata = DynamicMetadata {
+                has_adaptive_tone_map_flag: true,
+                hdr_reference_white: 203.0,
+                baseline_hdr_headroom_log2: 2.0,
+                gain_application_space_chromaticities: GAIN_APPLICATION_SPACE_CHROMATICITIES[2],
+                rules: vec![rule.clone()],
+                ..Default::default()
+            };
+            expect_false!(metadata.is_valid());
+            expect_true!(metadata.to_st2094_50().is_err());
+
+            // When use_pchip_slope is true, slopes are recomputed via PCHIP and ignored.
+            rule.use_pchip_slope = true;
+            expect_true!(rule.is_valid());
+            metadata.rules[0].use_pchip_slope = true;
+            expect_true!(metadata.is_valid());
+            expect_true!(metadata.to_st2094_50().is_ok());
+        }
+    }
+
+    #[gtest]
+    fn test_to_st2094_50_rejects_non_finite_fields() {
+        let valid_metadata = || DynamicMetadata {
+            has_adaptive_tone_map_flag: true,
+            hdr_reference_white: 203.0,
+            baseline_hdr_headroom_log2: 2.0,
+            gain_application_space_chromaticities: GAIN_APPLICATION_SPACE_CHROMATICITIES[2],
+            rules: vec![ToneMappingRule {
+                alternate_hdr_headroom_log2: 3.0,
+                mix: ComponentMix { max: 1.0, ..Default::default() },
+                curve: vec![
+                    ControlPoint { x: 0.0, y: 0.0, m: 0.5 },
+                    ControlPoint { x: 1.0, y: 0.5, m: 0.5 },
+                ],
+                use_pchip_slope: false,
+            }],
+            ..Default::default()
+        };
+
+        for non_finite in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            let mut m = valid_metadata();
+            m.baseline_hdr_headroom_log2 = non_finite;
+            expect_false!(m.is_valid());
+            expect_true!(m.to_st2094_50().is_err());
+
+            let mut m = valid_metadata();
+            m.rules[0].alternate_hdr_headroom_log2 = non_finite;
+            expect_false!(m.is_valid());
+            expect_true!(m.to_st2094_50().is_err());
+
+            let mut m = valid_metadata();
+            m.rules[0].mix = ComponentMix {
+                rgb: [non_finite, non_finite, non_finite],
+                max: 0.5,
+                min: 0.0,
+                component: 0.0,
+            };
+            expect_false!(m.is_valid());
+            expect_true!(m.to_st2094_50().is_err());
+
+            let mut m = valid_metadata();
+            m.rules[0].curve[1].x = non_finite;
+            expect_false!(m.is_valid());
+            expect_true!(m.to_st2094_50().is_err());
+
+            let mut m = valid_metadata();
+            m.rules[0].curve[1].y = non_finite;
+            expect_false!(m.is_valid());
+            expect_true!(m.to_st2094_50().is_err());
+        }
     }
 }
